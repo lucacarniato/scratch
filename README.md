@@ -1,19 +1,3 @@
-//  ────────────────────────────────────────────────────────────
-//  check_sdf_validity.cpp  –  OpenVDB 11.x
-//  g++ -std=c++17 -I$OPENVDB_ROOT/include -L$OPENVDB_ROOT/lib \
-//      -lopenvdb -ltbb -o check_sdf_validity check_sdf_validity.cpp
-//  ────────────────────────────────────────────────────────────
-#include <openvdb/openvdb.h>
-#include <cmath>
-#include <iostream>
-#include <string>
-
-namespace {
-
-/// Return true if `grid` looks like a valid signed distance field.
-/// @param gradTol      allowed deviation of |∇φ| from 1 (world units)
-/// @param bandWidth    voxels either side of φ=0 that we sample
-/// @param maxSamples   stop after this many voxels (keeps it quick)
 bool isValidSDF(const openvdb::FloatGrid& grid,
                 double  gradTol    = 0.25,
                 int     bandWidth  = 3,
@@ -56,4 +40,30 @@ bool isValidSDF(const openvdb::FloatGrid& grid,
         if (std::abs(mag - 1.0) > gradTol) return false; // fails Eikonal
     }
     return true;
+}
+
+} // anonymous namespace
+
+//-----------------------------------------------------------------------
+
+bool checkSDFInFile(const std::string& vdbPath,
+                    const std::string& gridName = "distance")
+{
+    openvdb::initialize();
+
+    openvdb::io::File file(vdbPath);
+    file.open();
+    openvdb::GridBase::Ptr base = file.readGrid(gridName);
+    file.close();
+
+    if (!base) {
+        std::cerr << "Grid \"" << gridName << "\" not found.\n";
+        return false;
+    }
+    if (base->valueType() != openvdb::FloatGrid::valueType()) {
+        std::cerr << "Grid is not a FloatGrid.\n";
+        return false;
+    }
+    const auto sdfGrid = openvdb::gridConstPtrCast<openvdb::FloatGrid>(base);
+    return isValidSDF(*sdfGrid);
 }
