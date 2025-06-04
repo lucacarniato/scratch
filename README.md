@@ -1,69 +1,58 @@
-bool isValidSDF(const openvdb::FloatGrid& grid,
-                double  gradTol    = 0.25,
-                int     bandWidth  = 3,
-                size_t  maxSamples = 500'000)
-{
-    // 0. quick metadata sanity
-    if (grid.getGridClass() != openvdb::GRID_LEVEL_SET) return false;
+import os
+import shutil
+import zipfile
 
-    const double voxelSize = grid.voxelSize()[0];              // assume isotropic
-    const double band      = bandWidth * voxelSize;
+from pathlib import Path
 
-    // 1. make sure we do have both negative and positive samples
-    bool hasNeg = false, hasPos = false;
-    for (auto it = grid.cbeginValueOn(); it; ++it) {
-        const float v = *it;
-        hasNeg |= v < 0.0f;
-        hasPos |= v > 0.0f;
-        if (hasNeg && hasPos) break;
-    }
-    if (!(hasNeg && hasPos)) return false;
+def collect_vfgp_files(source_dir):
+    return list(Path(source_dir).rglob("*.vfgp"))
 
-    // 2. check the Eikonal property near the surface
-    const auto acc = grid.getConstAccessor();
-    size_t tested = 0;
-    for (auto it = grid.cbeginValueOn(); it; ++it) {
-        const float v = *it;
-        if (std::abs(v) > band) continue;                 // only near φ = 0
-        if (++tested > maxSamples) break;
+def copy_files(files, dest_dir):
+    os.makedirs(dest_dir, exist_ok=True)
+    copied_files = []
+    for file in files:
+        dest_path = Path(dest_dir) / file.name
+        shutil.copy(file, dest_path)
+        copied_files.append(dest_path)
+    return copied_files
 
-        const openvdb::Coord ijk = it.getCoord();
-        // central differences, world-space
-        const double dx = (acc.getValue(ijk.offsetBy(1,0,0)) -
-                           acc.getValue(ijk.offsetBy(-1,0,0))) / (2.0 * voxelSize);
-        const double dy = (acc.getValue(ijk.offsetBy(0,1,0)) -
-                           acc.getValue(ijk.offsetBy(0,-1,0))) / (2.0 * voxelSize);
-        const double dz = (acc.getValue(ijk.offsetBy(0,0,1)) -
-                           acc.getValue(ijk.offsetBy(0,0,-1))) / (2.0 * voxelSize);
+def unzip_files(zip_files, extract_to):
+    os.makedirs(extract_to, exist_ok=True)
+    for zip_file in zip_files:
+        try:
+            with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+                zip_ref.extractall(extract_to / zip_file.stem)
+        except zipfile.BadZipFile:
+            print(f"Warning: {zip_file} is not a valid zip file")
 
-        const double mag = std::sqrt(dx*dx + dy*dy + dz*dz);
-        if (std::abs(mag - 1.0) > gradTol) return false; // fails Eikonal
-    }
-    return true;
-}
+def collect_and_copy_vdb_files(search_dir, dest_dir):
+    os.makedirs(dest_dir, exist_ok=True)
+    for vdb_file in Path(search_dir).rglob("*.vdb"):
+        shutil.copy(vdb_file, Path(dest_dir) / vdb_file.name)
 
-} // anonymous namespace
+def main(source_dir, temp_dir, vdb_output_dir):
+    # Step 1: Collect .vfgp files
+    vfgp_files = collect_vfgp_files(source_dir)
+    print(f"Found {len(vfgp_files)} .vfgp files.")
 
-//-----------------------------------------------------------------------
+    # Step 2: Copy to temp directory
+    copied_vfgp_files = copy_files(vfgp_files, temp_dir)
+    
+    # Step 3: Unzip files in temp directory
+    unzip_dir = Path(temp_dir) / "unzipped"
+    unzip_files(copied_vfgp_files, unzip_dir)
 
-bool checkSDFInFile(const std::string& vdbPath,
-                    const std::string& gridName = "distance")
-{
-    openvdb::initialize();
+    # Step 4: Collect and copy .vdb files to final output directory
+    collect_and_copy_vdb_files(unzip_dir, vdb_output_dir)
 
-    openvdb::io::File file(vdbPath);
-    file.open();
-    openvdb::GridBase::Ptr base = file.readGrid(gridName);
-    file.close();
+    # Step 5: Delete the temp directory
+    shutil.rmtree(temp_dir)
+    print(f"Temporary directory '{temp_dir}' deleted.")
 
-    if (!base) {
-        std::cerr << "Grid \"" << gridName << "\" not found.\n";
-        return false;
-    }
-    if (base->valueType() != openvdb::FloatGrid::valueType()) {
-        std::cerr << "Grid is not a FloatGrid.\n";
-        return false;
-    }
-    const auto sdfGrid = openvdb::gridConstPtrCast<openvdb::FloatGrid>(base);
-    return isValidSDF(*sdfGrid);
-}
+if __name__ == "__main__":
+    source_directory = "path/to/source"
+    temporary_directory = "path/to/temp"
+    vdb_output_directory = "path/to/output_vdbs"
+    
+    main(source_directory, temporary_directory, vdb_output_directory)
+
