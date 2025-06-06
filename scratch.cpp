@@ -1,66 +1,85 @@
-#include <CGAL/Simple_cartesian.h>
-#include <CGAL/Surface_mesh.h>
-#include <CGAL/IO/OBJ_reader.h>
-
 #include "manifold.h"
-#include <unordered_map>
-#include <fstream>
+#include <glm/glm.hpp>
+#include <vector>
 #include <iostream>
 
-typedef CGAL::Exact_predicates_inexact_constructions_kernel Kernel;
-typedef Kernel::Point_3 Point;
-typedef CGAL::Surface_mesh<Point> SurfaceMesh;
+using namespace manifold;
 
-// Convert CGAL Surface_mesh to manifold::Mesh
-manifold::Mesh ConvertToManifold(const SurfaceMesh& mesh) {
-    using namespace manifold;
-    std::vector<glm::vec3> vertices;
-    std::vector<glm::ivec3> triangles;
-    std::unordered_map<SurfaceMesh::Vertex_index, int> vmap;
+// Your mesh data: fill these with your actual geometry
+std::vector<glm::vec3> verticesA;
+std::vector<glm::ivec3> trianglesA;
+std::vector<glm::vec3> verticesB;
+std::vector<glm::ivec3> trianglesB;
 
-    int i = 0;
-    for (auto v : mesh.vertices()) {
-        Point p = mesh.point(v);
-        vertices.emplace_back(p.x(), p.y(), p.z());
-        vmap[v] = i++;
+Manifold BooleanDifferenceAndClean(
+    const std::vector<glm::vec3>& vertsA,
+    const std::vector<glm::ivec3>& trisA,
+    const std::vector<glm::vec3>& vertsB,
+    const std::vector<glm::ivec3>& trisB,
+    float relativeThreshold = 0.01f  // 1% of largest volume
+) {
+    // Step 1: Create mesh structs
+    Mesh meshA, meshB;
+    meshA.vertPos = vertsA;
+    meshA.triVerts = trisA;
+
+    meshB.vertPos = vertsB;
+    meshB.triVerts = trisB;
+
+    // Step 2: Construct Manifolds
+    Manifold A(meshA);
+    Manifold B(meshB);
+
+    // Step 3: Boolean Difference
+    Manifold result = A - B;
+
+    // Step 4: Split into components
+    std::vector<Manifold> components = result.Split();
+
+    // Step 5: Find largest volume
+    float maxVolume = 0.0f;
+    for (const auto& c : components) {
+        float vol = c.GetProperties().volume;
+        if (vol > maxVolume) {
+            maxVolume = vol;
+        }
     }
 
-    for (auto f : mesh.faces()) {
-        std::vector<SurfaceMesh::Vertex_index> vs;
-        for (auto v : CGAL::vertices_around_face(mesh.halfedge(f), mesh))
-            vs.push_back(v);
+    // Step 6: Set threshold based on largest volume
+    float volumeThreshold = relativeThreshold * maxVolume;
 
-        if (vs.size() != 3) continue; // skip non-triangular
-        triangles.emplace_back(vmap[vs[0]], vmap[vs[1]], vmap[vs[2]]);
+    // Step 7: Filter components
+    std::vector<Manifold> filtered;
+    for (const auto& c : components) {
+        float vol = c.GetProperties().volume;
+        if (vol >= volumeThreshold) {
+            filtered.push_back(c);
+        }
     }
 
-    return {vertices, triangles};
+    // Step 8: Recombine components
+    if (filtered.empty()) {
+        std::cerr << "Warning: All components filtered out. Returning empty manifold.\n";
+        return Manifold();
+    }
+
+    Manifold cleaned = filtered[0];
+    for (size_t i = 1; i < filtered.size(); ++i) {
+        cleaned = cleaned + filtered[i];
+    }
+
+    return cleaned;
 }
 
-int main(int argc, char** argv) {
-    if (argc < 4) {
-        std::cerr << "Usage: " << argv[0] << " mesh1.obj mesh2.obj result.obj\n";
-        return 1;
-    }
+int main() {
+    // TODO: Fill verticesA, trianglesA, verticesB, trianglesB with your mesh data.
 
-    SurfaceMesh mesh1, mesh2;
-    std::ifstream in1(argv[1]), in2(argv[2]);
-    if (!CGAL::IO::read_OBJ(in1, mesh1) || !CGAL::IO::read_OBJ(in2, mesh2)) {
-        std::cerr << "Error reading OBJ files.\n";
-        return 1;
-    }
+    Manifold cleaned = BooleanDifferenceAndClean(verticesA, trianglesA, verticesB, trianglesB, 0.01f);
 
-    manifold::Mesh m1 = ConvertToManifold(mesh1);
-    manifold::Mesh m2 = ConvertToManifold(mesh2);
+    // Export result
+    cleaned.ExportMesh("cleaned_difference.obj");
 
-    manifold::Manifold solidA(m1);
-    manifold::Manifold solidB(m2);
-
-    manifold::Manifold result = solidA - solidB;
-    manifold::Mesh output = result.GetMesh();
-
-    manifold::ExportMesh(argv[3], output);
-
-    std::cout << "Boolean difference complete. Output written to " << argv[3] << "\n";
+    std::cout << "Cleaned mesh exported.\n";
     return 0;
 }
+
