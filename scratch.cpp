@@ -1,29 +1,34 @@
-##include <CGAL/Exact_predicates_exact_constructions_kernel.h>
-#include <CGAL/Surface_mesh.h>
-#include <CGAL/boost/graph/copy_face_graph.h>
-#include <CGAL/Polygon_mesh_processing/corefine_and_compute_difference.h>
-
+#include <CGAL/Polyhedron_3.h>
+#include <CGAL/Nef_polyhedron_3.h>
+#include <CGAL/boost/graph/copy_face_graph.h>          // copy_face_graph()
+#include <CGAL/Polygon_mesh_processing/repair.h>        // optional clean-up
 namespace PMP = CGAL::Polygon_mesh_processing;
 
-typedef CGAL::Exact_predicates_exact_constructions_kernel EPECK;
-typedef CGAL::Surface_mesh<EPECK::Point_3> ExactMesh;
+using Kernel       = CGAL::Exact_predicates_exact_constructions_kernel;
+using Point        = Kernel::Point_3;
+using Surface_mesh = CGAL::Surface_mesh<Point>;
+using Polyhedron   = CGAL::Polyhedron_3<Kernel>;
+using Nef          = CGAL::Nef_polyhedron_3<Kernel>;
 
-// Your original mesh:
-typedef CGAL::Filtered_kernel<CartesianKernel> FilteredKernel;
-typedef CGAL::Surface_mesh<FilteredKernel::Point_3> FilteredMesh;
+Polyhedron P, Q;
+CGAL::copy_face_graph(smA, P);      // Surface_mesh  -> Polyhedron
+CGAL::copy_face_graph(smB, Q);
 
-FilteredMesh inputA, inputB; // your input meshes
-ExactMesh exactA, exactB;
 
-CGAL::copy_face_graph(inputA, exactA);
-CGAL::copy_face_graph(inputB, exactB);
+Nef nA(P);            // ctor from Polyhedron_3
+Nef nB(Q);
 
-// Boolean
-ExactMesh result;
-bool ok = PMP::corefine_and_compute_difference(exactA, exactB, result);
+Nef nDiff = nA - nB;  // Boolean: A \ B
 
-// (Optional) Copy result back
-FilteredMesh finalResult;
-CGAL::copy_face_graph(result, finalResult);
+
+Polyhedron Pdiff;
+if ( !nDiff.convert_to_polyhedron(Pdiff) )
+{
+  std::cerr << "Boolean result is not a 2-manifold – cannot export\n";
+  return EXIT_FAILURE;
+}
+
+Surface_mesh diff;
+CGAL::copy_face_graph(Pdiff, diff);    // Polyhedron -> Surface_mesh
 
 
