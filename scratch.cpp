@@ -1,34 +1,50 @@
+#include <CGAL/Simple_cartesian.h>
+#include <CGAL/Surface_mesh.h>
 #include <CGAL/Polyhedron_3.h>
 #include <CGAL/Nef_polyhedron_3.h>
-#include <CGAL/boost/graph/copy_face_graph.h>          // copy_face_graph()
-#include <CGAL/Polygon_mesh_processing/repair.h>        // optional clean-up
-namespace PMP = CGAL::Polygon_mesh_processing;
+#include <CGAL/convex_hull_3.h>
+#include <CGAL/minkowski_sum_3.h>
+#include <CGAL/boost/graph/convert_surface_mesh.h>
+#include <CGAL/boost/graph/IO/polygon_mesh_io.h>
+#include <CGAL/make_icosahedron.h>
 
-using Kernel       = CGAL::Exact_predicates_exact_constructions_kernel;
-using Point        = Kernel::Point_3;
-using Surface_mesh = CGAL::Surface_mesh<Point>;
-using Polyhedron   = CGAL::Polyhedron_3<Kernel>;
-using Nef          = CGAL::Nef_polyhedron_3<Kernel>;
+typedef CGAL::Simple_cartesian<double>         Kernel;
+typedef Kernel::Point_3                        Point;
+typedef CGAL::Surface_mesh<Point>              SurfaceMesh;
+typedef CGAL::Polyhedron_3<Kernel>             Polyhedron;
+typedef CGAL::Nef_polyhedron_3<Kernel>         Nef_polyhedron;
 
-Polyhedron P, Q;
-CGAL::copy_face_graph(smA, P);      // Surface_mesh  -> Polyhedron
-CGAL::copy_face_graph(smB, Q);
+SurfaceMesh offset_surface(const SurfaceMesh& input_sm, double offset_radius) {
+    // Step 1: Convert Surface_mesh → Polyhedron_3
+    Polyhedron input_poly;
+    CGAL::copy_face_graph(input_sm, input_poly);
 
+    // Step 2: Create small sphere polyhedron for Minkowski sum
+    Polyhedron sphere_poly;
+    CGAL::make_icosahedron(sphere_poly); // Low-res sphere (~20 triangles)
 
-Nef nA(P);            // ctor from Polyhedron_3
-Nef nB(Q);
+    // Scale the icosahedron to desired offset radius
+    for (auto it = sphere_poly.points_begin(); it != sphere_poly.points_end(); ++it) {
+        *it = Point(it->x() * offset_radius, it->y() * offset_radius, it->z() * offset_radius);
+    }
 
-Nef nDiff = nA - nB;  // Boolean: A \ B
+    // Step 3: Convert to Nef polyhedra
+    Nef_polyhedron nef_input(input_poly);
+    Nef_polyhedron nef_sphere(sphere_poly);
 
+    // Step 4: Perform Minkowski sum
+    Nef_polyhedron nef_result = CGAL::minkowski_sum_3(nef_input, nef_sphere);
 
-Polyhedron Pdiff;
-if ( !nDiff.convert_to_polyhedron(Pdiff) )
-{
-  std::cerr << "Boolean result is not a 2-manifold – cannot export\n";
-  return EXIT_FAILURE;
+    // Step 5: Convert result back to Polyhedron_3
+    Polyhedron result_poly;
+    nef_result.convert_to_polyhedron(result_poly);
+
+    // Step 6: Convert back to Surface_mesh
+    SurfaceMesh result_sm;
+    CGAL::copy_face_graph(result_poly, result_sm);
+
+    return result_sm;
 }
 
-Surface_mesh diff;
-CGAL::copy_face_graph(Pdiff, diff);    // Polyhedron -> Surface_mesh
 
 
