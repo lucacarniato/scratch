@@ -46,5 +46,39 @@ SurfaceMesh offset_surface(const SurfaceMesh& input_sm, double offset_radius) {
     return result_sm;
 }
 
+std::vector<float> boxVertices = {
+  // 8 corners of the box (x, y, z)
+  min.x(), min.y(), min.z(),
+  max.x(), min.y(), min.z(),
+  max.x(), max.y(), min.z(),
+  min.x(), max.y(), min.z(),
+  min.x(), min.y(), max.z(),
+  max.x(), min.y(), max.z(),
+  max.x(), max.y(), max.z(),
+  min.x(), max.y(), max.z(),
+};
+
+std::vector<int> boxTriangles = {
+  // bottom face
+  0, 1, 2,  0, 2, 3,
+  // top face
+  4, 6, 5,  4, 7, 6,
+  // front face
+  0, 4, 5,  0, 5, 1,
+  // back face
+  3, 2, 6,  3, 6, 7,
+  // left face
+  0, 3, 7,  0, 7, 4,
+  // right face
+  1, 5, 6,  1, 6, 2,
+};
+
+Mesh boxMesh = {
+  .vertices = boxVertices,
+  .triVerts = boxTriangles
+};
+
+Manifold box = Manifold(boxMesh);
+
 
 
