@@ -1,23 +1,15 @@
-#include <iostream>
-#include <fstream>
-#include <string>
 
-void printCurrentMemoryUsageGB() {
-    std::ifstream status("/proc/self/status");
-    std::string line;
-    while (std::getline(status, line)) {
-        if (line.find("VmRSS:") == 0) {
-            std::istringstream iss(line);
-            std::string label, value, unit;
-            iss >> label >> value >> unit;
-            double mem_kb = std::stod(value);
-            std::cout << "Current resident memory (RSS / btop MemB): " 
-                      << mem_kb / (1024 * 1024) << " GB" << std::endl;
-            break;
-        }
-    }
-}
+#include <BOPDS_Pair.hxx>
 
+struct BOPDS_PairHasher {
+  static Standard_Integer HashCode(const BOPDS_Pair& theKey, const Standard_Integer theUpper)
+  {
+    return ::HashCode(theKey.Index1() * 31 + theKey.Index2(), theUpper);
+  }
 
-
+  static Standard_Boolean IsEqual(const BOPDS_Pair& k1, const BOPDS_Pair& k2)
+  {
+    return k1.Index1() == k2.Index1() && k1.Index2() == k2.Index2();
+  }
+};
 
