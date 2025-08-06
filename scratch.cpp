@@ -1,80 +1,84 @@
-
 #include <iostream>
 #include <cmath>
 
-// Helper struct for 3D vectors
-struct Vec3 {
-    double x, y, z;
+// Normalize angle to [0, 2π)
+double normalizeAngle(double angle) {
+    while (angle < 0) angle += 2.0 * M_PI;
+    while (angle >= 2.0 * M_PI) angle -= 2.0 * M_PI;
+    return angle;
+}
 
-    // Normalize the vector
-    void normalize() {
-        double len = std::sqrt(x * x + y * y + z * z);
-        if (len > 1e-6) {
-            x /= len;
-            y /= len;
-            z /= len;
-        }
+// Linear interpolation helper
+double lerp(double a, double b, double t) {
+    return a * (1.0 - t) + b * t;
+}
+
+// Spherical coordinate interpolation with 4 coefficients
+double sphericalInterpolate(
+    double coeffNorth, double coeffSouth, double coeffEast, double coeffWest,
+    double nx, double ny, double nz)
+{
+    // Normalize vector
+    double len = std::sqrt(nx * nx + ny * ny + nz * nz);
+    if (len < 1e-6) return (coeffNorth + coeffSouth + coeffEast + coeffWest) * 0.25;
+    nx /= len;
+    ny /= len;
+    nz /= len;
+
+    // Spherical coordinates
+    double theta = atan2(ny, nx); // Azimuth: [-π, π]
+    theta = normalizeAngle(theta); // [0, 2π)
+    double phi = std::asin(nz);   // Elevation: [-π/2, π/2]
+
+    // Map elevation phi to a vertical blend factor:
+    // phi = π/2 (up) -> 1 (North)
+    // phi = -π/2 (down) -> 1 (South)
+    // phi = 0 (flat) -> 0
+    double verticalBlendNorth = (nz > 0) ? nz : 0.0;  // Only up contributes to North
+    double verticalBlendSouth = (nz < 0) ? -nz : 0.0; // Only down contributes to South
+    double horizontalWeight = 1.0 - (verticalBlendNorth + verticalBlendSouth);
+
+    // Determine azimuthal sector (East/North/West/South)
+    const double sectorSize = M_PI / 2.0;
+    double sectorPos = theta / sectorSize;
+    int sector = static_cast<int>(sectorPos);
+    double t = sectorPos - sector;
+
+    double coeffA, coeffB;
+
+    switch (sector) {
+        case 0: coeffA = coeffEast;  coeffB = coeffNorth; break; // East to North
+        case 1: coeffA = coeffNorth; coeffB = coeffWest;  break; // North to West
+        case 2: coeffA = coeffWest;  coeffB = coeffSouth; break; // West to South
+        case 3: coeffA = coeffSouth; coeffB = coeffEast;  break; // South to East
+        default: coeffA = coeffB = 0.0; break;
     }
 
-    // Length in XY-plane
-    double lengthXY() const {
-        return std::sqrt(x * x + y * y);
-    }
-};
+    // Interpolate in azimuth (longitude)
+    double azimuthInterp = lerp(coeffA, coeffB, t);
 
-// Interpolation function in 3D with only 4 coefficients (XY projection)
-double interpolateCoefficientXY(const Vec3& normal, double coeffNorth, double coeffSouth, double coeffEast, double coeffWest) {
-    Vec3 n = normal;
-    n.normalize();
+    // Final blend: vertical North/South influence + horizontal azimuth interpolation
+    double finalCoeff =
+        verticalBlendNorth * coeffNorth +
+        verticalBlendSouth * coeffSouth +
+        horizontalWeight * azimuthInterp;
 
-    // Project onto XY-plane
-    Vec3 projected = { n.x, n.y, 0 };
-    double lenXY = projected.lengthXY();
-
-    // If XY projection is too small, default to average
-    if (lenXY < 1e-6) {
-        return (coeffNorth + coeffSouth + coeffEast + coeffWest) * 0.25;
-    }
-
-    // Normalize projected vector
-    projected.x /= lenXY;
-    projected.y /= lenXY;
-
-    // Define axis directions
-    Vec3 north = { 0, 1, 0 };
-    Vec3 south = { 0, -1, 0 };
-    Vec3 east  = { 1, 0, 0 };
-    Vec3 west  = { -1, 0, 0 };
-
-    // Compute positive dot products (weights)
-    double weightN = std::max(0.0, projected.y);
-    double weightS = std::max(0.0, -projected.y);
-    double weightE = std::max(0.0, projected.x);
-    double weightW = std::max(0.0, -projected.x);
-
-    double weightSum = weightN + weightS + weightE + weightW;
-
-    if (weightSum < 1e-6)
-        return 0.0; // Degenerate case
-
-    // Interpolate
-    double interpolated = (coeffNorth * weightN + coeffSouth * weightS + coeffEast * weightE + coeffWest * weightW) / weightSum;
-
-    return interpolated;
+    return finalCoeff;
 }
 
 int main() {
     // Example coefficients
-    double coeffN = 1.0;
-    double coeffS = 0.5;
-    double coeffE = 0.8;
-    double coeffW = 0.3;
+    double coeffNorth = 1.0;
+    double coeffSouth = 0.5;
+    double coeffEast  = 0.8;
+    double coeffWest  = 0.3;
 
-    // Example 3D direction vector
-    Vec3 direction = { 1.0, 1.0, 1.0 }; // 45 degrees NE, tilted up
-
-    double result = interpolateCoefficientXY(direction, coeffN, coeffS, coeffE, coeffW);
-    std::cout << "Interpolated Coefficient: " << result << std::endl;
+    // Example normal vectors:
+    std::cout << "Up (0,0,1): " << sphericalInterpolate(coeffNorth, coeffSouth, coeffEast, coeffWest, 0, 0, 1) << std::endl;
+    std::cout << "Down (0,0,-1): " << sphericalInterpolate(coeffNorth, coeffSouth, coeffEast, coeffWest, 0, 0, -1) << std::endl;
+    std::cout << "East (1,0,0): " << sphericalInterpolate(coeffNorth, coeffSouth, coeffEast, coeffWest, 1, 0, 0) << std::endl;
+    std::cout << "North-East (1,1,0): " << sphericalInterpolate(coeffNorth, coeffSouth, coeffEast, coeffWest, 1, 1, 0) << std::endl;
+    std::cout << "North-East-Up (1,1,1): " << sphericalInterpolate(coeffNorth, coeffSouth, coeffEast, coeffWest, 1, 1, 1) << std::endl;
 
     return 0;
 }
