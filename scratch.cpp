@@ -1,71 +1,42 @@
-#include <iostream>
-#include <cmath>
-#include <algorithm>
+#include <openvdb/openvdb.h>
+#include <openvdb/tools/Interpolation.h>   // GridSampler
+#include <manifold/manifold.h>              // Manifold::LevelSet
 
-// Clamp negative dot products to 0
-double saturate(double x) {
-    return std::max(0.0, x);
-}
-
-double sphericalInterpolate6(
-    double coeffNorth, double coeffSouth,
-    double coeffEast, double coeffWest,
-    double nx, double ny, double nz)
+// Assume: grid is a FloatGrid::Ptr that stores a *level set* (SDF).
+manifold::Manifold meshFromVDB(openvdb::FloatGrid::ConstPtr grid)
 {
-    // Normalize the direction vector
-    double len = std::sqrt(nx * nx + ny * ny + nz * nz);
-    if (len < 1e-6) {
-        // Degenerate vector: return average
-        return (coeffNorth + coeffSouth + coeffEast + coeffWest) * 0.25;
-    }
+    // 1) Continuous sampler over the VDB in *world* space.
+    openvdb::tools::GridSampler<
+        openvdb::FloatGrid, openvdb::tools::BoxSampler> sampler(*grid);
 
-    nx /= len;
-    ny /= len;
-    nz /= len;
+    // 2) SDF callback for Manifold (expects signed distance; zero isosurface).
+    // OpenVDB convention: negative inside, positive outside — also what Manifold expects.
+    auto sdf = [&](manifold::vec3 p) -> double {
+        return sampler.wsSample(openvdb::Vec3d(p.x, p.y, p.z));
+    };
 
-    // Dot products with axis directions
-    double dotEast  = saturate( nx);     // +X
-    double dotWest  = saturate(-nx);     // -X
-    double dotUp    = saturate( ny);     // +Y (mapped to East)
-    double dotDown  = saturate(-ny);     // -Y (mapped to West)
-    double dotNorth = saturate( nz);     // +Z
-    double dotSouth = saturate(-nz);     // -Z
+    // 3) Bounds (world-space) from the grid’s active voxel bbox, padded a bit.
+    openvdb::CoordBBox ibox;
+    grid->tree().evalActiveVoxelBoundingBox(ibox);
+    const auto& xform = grid->transform();
+    openvdb::Vec3d wmin = xform.indexToWorld(ibox.min().asVec3d());
+    openvdb::Vec3d wmax = xform.indexToWorld(ibox.max().asVec3d());
 
-    // Use assigned mappings for Up and Down
-    dotEast += dotUp;   // Up contributes to East
-    dotWest += dotDown; // Down contributes to West
+    // pad by a few voxels to ensure the narrow band is fully inside
+    const openvdb::Vec3d vox = xform.voxelSize();
+    const openvdb::Vec3d pad = 3.0 * vox; // adjust if your band is wider
+    wmin -= pad; wmax += pad;
 
-    // Total weight
-    double totalWeight = dotEast + dotWest + dotNorth + dotSouth;
-    if (totalWeight < 1e-6) {
-        return (coeffNorth + coeffSouth + coeffEast + coeffWest) * 0.25;
-    }
+    manifold::Box bounds{
+        manifold::vec3(wmin.x(), wmin.y(), wmin.z()),
+        manifold::vec3(wmax.x(), wmax.y(), wmax.z())
+    };
 
-    // Weighted sum
-    double interpolated =
-        (coeffEast  * dotEast +
-         coeffWest  * dotWest +
-         coeffNorth * dotNorth +
-         coeffSouth * dotSouth) / totalWeight;
+    // 4) Grid step for marching tetrahedra. Start near voxel size.
+    const double edgeLength = (vox.x() + vox.y() + vox.z()) / 3.0;
 
-    return interpolated;
+    // 5) Extract zero level (level=0). Leave tolerance default; enable parallel.
+    return manifold::Manifold::LevelSet(sdf, bounds, edgeLength, /*level=*/0.0,
+                                        /*tolerance=*/-1.0, /*canParallel=*/true);
 }
 
-int main() {
-    // Example coefficients
-    double coeffNorth = 1.0;
-    double coeffSouth = 0.3;
-    double coeffEast  = 0.8;
-    double coeffWest  = 0.4;
-
-    // Example directions
-    std::cout << "North (0, 0, 1):  " << sphericalInterpolate6(coeffNorth, coeffSouth, coeffEast, coeffWest, 0, 0, 1) << std::endl;
-    std::cout << "South (0, 0, -1): " << sphericalInterpolate6(coeffNorth, coeffSouth, coeffEast, coeffWest, 0, 0, -1) << std::endl;
-    std::cout << "East (1, 0, 0):   " << sphericalInterpolate6(coeffNorth, coeffSouth, coeffEast, coeffWest, 1, 0, 0) << std::endl;
-    std::cout << "West (-1, 0, 0):  " << sphericalInterpolate6(coeffNorth, coeffSouth, coeffEast, coeffWest, -1, 0, 0) << std::endl;
-    std::cout << "Up (0, 1, 0):     " << sphericalInterpolate6(coeffNorth, coeffSouth, coeffEast, coeffWest, 0, 1, 0) << std::endl;
-    std::cout << "Down (0, -1, 0):  " << sphericalInterpolate6(coeffNorth, coeffSouth, coeffEast, coeffWest, 0, -1, 0) << std::endl;
-    std::cout << "Diagonal (1, 1, 1): " << sphericalInterpolate6(coeffNorth, coeffSouth, coeffEast, coeffWest, 1, 1, 1) << std::endl;
-
-    return 0;
-}
