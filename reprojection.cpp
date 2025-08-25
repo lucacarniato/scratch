@@ -415,3 +415,19 @@ void ProjectMeshToSDF_ManifoldOpenVDB(
   }
 #endif
 }
+
+// 1) You already smoothed (with sharpenedEdges) and refined in Manifold:
+manifold::MeshGL64 refined = smoothed.Refine(2).GetMeshGL64(); // or equivalent
+
+// 2) Load or build your OpenVDB SDF grid:
+openvdb::FloatGrid::ConstPtr sdf = /* your grid */;
+
+// 3) Project:
+ProjectionParams p;
+p.newtonIters       = 5;
+p.clampFrac         = 0.3;
+p.dihedralSharpDeg  = 60.0; // feature detect threshold
+ProjectMeshToSDF_ManifoldOpenVDB(refined, sdf, p);
+
+// 4) Use/export the updated triangles in `refined`.
+
